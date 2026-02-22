@@ -1,0 +1,17 @@
+# Development Dockerfile with hot reload
+FROM rust:1.84-alpine
+
+WORKDIR /app
+
+RUN apk --no-cache add musl-dev ca-certificates
+RUN cargo install cargo-watch
+
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build && rm -rf src
+
+COPY . .
+
+EXPOSE 5381
+
+CMD ["cargo", "watch", "-x", "run -- --dev-mode"]

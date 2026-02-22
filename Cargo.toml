@@ -1,0 +1,64 @@
+[package]
+name = "less-inference"
+version = "0.1.0"
+edition = "2021"
+description = "Authenticated E2EE inference proxy for the Less platform"
+
+[dependencies]
+# HTTP framework
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# JWT
+jsonwebtoken = "9"
+
+# P-256 / ECDSA
+p256 = { version = "0.13", features = ["jwk", "pkcs8"] }
+elliptic-curve = { version = "0.13", features = ["jwk"] }
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# HMAC for rate limit keys
+hmac = "0.12"
+sha2 = "0.10"
+
+# Errors
+thiserror = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Hex decode
+hex = "0.4"
+
+# Random - use rand_core 0.6 to match p256's re-export
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# URL building
+url = "2"
+
+
+futures-util = { version = "0.3", features = ["io"] }
+
+# Base64 for JWK coordinates
+base64 = "0.22"
+
+# Byte streams
+bytes = "1"
+http-body-util = "0.1"
+http = "1"
+
+[dev-dependencies]
+wiremock = "0.6"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
