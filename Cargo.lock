@@ -172,6 +172,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "betterbase-inference"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "bytes",
+ "clap",
+ "elliptic-curve",
+ "futures-util",
+ "hex",
+ "hmac",
+ "http",
+ "http-body-util",
+ "jsonwebtoken",
+ "p256",
+ "rand_core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1010,36 +1040,6 @@ name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
-
-[[package]]
-name = "less-inference"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64",
- "bytes",
- "clap",
- "elliptic-curve",
- "futures-util",
- "hex",
- "hmac",
- "http",
- "http-body-util",
- "jsonwebtoken",
- "p256",
- "rand_core",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
- "wiremock",
-]
 
 [[package]]
 name = "libc"

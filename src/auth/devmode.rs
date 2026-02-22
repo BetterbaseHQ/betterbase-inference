@@ -78,7 +78,7 @@ impl DevMode {
             client_id: client_id.into(),
             scope: scope.into(),
             iss: "less-accounts".into(),
-            aud: vec!["less-inference".into()],
+            aud: vec!["betterbase-inference".into()],
             exp: now + 86400,
             iat: now,
         };
@@ -131,7 +131,7 @@ mod tests {
         let validator = Validator::new(ValidatorConfig {
             jwks_url,
             issuer: "less-accounts".into(),
-            audiences: vec!["less-inference".into()],
+            audiences: vec!["betterbase-inference".into()],
             refresh_ttl: Some(Duration::from_secs(3600)),
         });
 

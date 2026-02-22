@@ -18,7 +18,7 @@ RUN touch src/main.rs && cargo build --release
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates && \
     addgroup -g 65532 -S nonroot && adduser -u 65532 -S -G nonroot nonroot
-COPY --from=builder /app/target/release/less-inference /server
+COPY --from=builder /app/target/release/betterbase-inference /server
 USER nonroot
 EXPOSE 5381
 ENTRYPOINT ["/server"]

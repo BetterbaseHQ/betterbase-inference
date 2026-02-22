@@ -198,7 +198,7 @@ mod tests {
         )
         .await;
 
-        Validator::with_jwks(jwks, "less-accounts".into(), vec!["less-inference".into()])
+        Validator::with_jwks(jwks, "less-accounts".into(), vec!["betterbase-inference".into()])
     }
 
     fn build_token(encoding_key: &EncodingKey, kid: &str, claims: TestClaims) -> String {
@@ -225,7 +225,7 @@ mod tests {
             TestClaims {
                 sub: "user-123".into(),
                 iss: "less-accounts".into(),
-                aud: vec!["less-inference".into()],
+                aud: vec!["betterbase-inference".into()],
                 scope: "inference profile".into(),
                 client_id: "client-abc".into(),
                 jti: "token-id".into(),
@@ -251,7 +251,7 @@ mod tests {
             TestClaims {
                 sub: "user-123".into(),
                 iss: "less-accounts".into(),
-                aud: vec!["less-inference".into()],
+                aud: vec!["betterbase-inference".into()],
                 scope: "inference".into(),
                 client_id: "client-abc".into(),
                 jti: "token-id".into(),
@@ -299,7 +299,7 @@ mod tests {
             TestClaims {
                 sub: "user-123".into(),
                 iss: "other-issuer".into(),
-                aud: vec!["less-inference".into()],
+                aud: vec!["betterbase-inference".into()],
                 scope: "inference".into(),
                 client_id: "client-abc".into(),
                 jti: "token-id".into(),
@@ -325,7 +325,7 @@ mod tests {
         let claims = TestClaims {
             sub: "user-123".into(),
             iss: "less-accounts".into(),
-            aud: vec!["less-inference".into()],
+            aud: vec!["betterbase-inference".into()],
             scope: "inference".into(),
             client_id: "client-abc".into(),
             jti: "token-id".into(),

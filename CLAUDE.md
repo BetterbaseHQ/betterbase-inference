@@ -2,9 +2,9 @@
 
 ## What this is
 
-Rust port of the Go `less-inference` microservice — an authenticated HTTP reverse proxy for Tinfoil E2EE inference. Validates JWTs via JWKS, enforces per-user rate limiting, and streams proxied responses (SSE).
+Rust port of the Go `betterbase-inference` microservice — an authenticated HTTP reverse proxy for Tinfoil E2EE inference. Validates JWTs via JWKS, enforces per-user rate limiting, and streams proxied responses (SSE).
 
-**Go source:** `/Users/nchapman/Code/lessisbetter/less-platform/less-inference/`
+**Go source:** `/Users/nchapman/Code/lessisbetter/less-platform/betterbase-inference/`
 
 ## Commands
 

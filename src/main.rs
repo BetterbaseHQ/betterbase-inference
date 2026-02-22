@@ -72,7 +72,7 @@ async fn main() {
             issuer = "less-accounts".into();
         }
         if audiences_raw.is_empty() {
-            audiences_raw = "less-inference".into();
+            audiences_raw = "betterbase-inference".into();
         }
 
         let addr = normalize_addr(&config.addr);
