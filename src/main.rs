@@ -69,7 +69,7 @@ async fn main() {
         };
 
         if issuer.is_empty() {
-            issuer = "less-accounts".into();
+            issuer = "betterbase-accounts".into();
         }
         if audiences_raw.is_empty() {
             audiences_raw = "betterbase-inference".into();
