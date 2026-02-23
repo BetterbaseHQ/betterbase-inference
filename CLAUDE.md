@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-## What this is
+This file provides guidance to Claude Code when working with the betterbase-inference codebase.
 
-Rust port of the Go `betterbase-inference` microservice — an authenticated HTTP reverse proxy for Tinfoil E2EE inference. Validates JWTs via JWKS, enforces per-user rate limiting, and streams proxied responses (SSE).
+## Overview
 
-**Go source:** `/Users/nchapman/Code/lessisbetter/less-platform/betterbase-inference/`
+Authenticated HTTP reverse proxy for Tinfoil E2EE inference. Validates JWTs via JWKS, enforces per-user rate limiting (token bucket), and streams proxied responses (SSE). Single-crate Rust binary using Axum.
 
 ## Commands
 
@@ -16,6 +16,8 @@ just fmt           # cargo fmt
 just dev           # Run in dev mode (ephemeral key, test token)
 just run           # Run with custom args
 ```
+
+Always run `just check` after implementation before reporting back.
 
 ## Architecture
 
@@ -66,3 +68,10 @@ src/
 | `RATE_LIMIT_BURST` | No | Burst size (default: 10) |
 | `IDENTITY_HASH_KEY` | No | 32 bytes hex for privacy-preserving rate limit keys |
 | `LOG_FORMAT` | No | `text` (default) or `json` |
+
+## Conventions
+
+- **Errors**: `thiserror` for error types. `AuthError` in `auth/errors.rs`.
+- **Naming**: `snake_case` everywhere (Rust).
+- **Testing**: `#[tokio::test]` with `wiremock` for HTTP mocking.
+- **Frozen v1 contracts**: `/v1/` routes and `X-Protocol-Version: 1` header must not change without migration.

@@ -2,7 +2,10 @@
 name = "betterbase-inference"
 version = "0.1.0"
 edition = "2021"
-description = "Authenticated E2EE inference proxy for the Less platform"
+description = "Authenticated E2EE inference proxy for the Betterbase platform"
+license = "Apache-2.0"
+authors = ["Betterbase <hello@betterbase.dev>"]
+repository = "https://github.com/BetterbaseHQ/betterbase-inference"
 
 [dependencies]
 # HTTP framework
