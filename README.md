@@ -137,7 +137,7 @@ src/
 - [betterbase-dev](https://github.com/BetterbaseHQ/betterbase-dev) -- Platform orchestration
 - [betterbase-accounts](../betterbase-accounts/) -- OPAQUE auth + OAuth 2.0 server
 - [betterbase-sync](../betterbase-sync/) -- Encrypted blob sync service
-- [@betterbase/sdk](../betterbase/) -- Client SDK (auth, crypto, sync, db)
+- [betterbase](../betterbase/) -- Client SDK (auth, crypto, sync, db)
 
 ## License
 
