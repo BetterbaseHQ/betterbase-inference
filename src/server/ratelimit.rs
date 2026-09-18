@@ -93,13 +93,21 @@ mod tests {
     #[test]
     fn test_rate_limit_key_with_hash_key() {
         let hash_key = b"01234567890123456789012345678901"; // 32 bytes
-        let key = rate_limit_key(Some(hash_key), "https://accounts.betterbase.dev", "user-123");
+        let key = rate_limit_key(
+            Some(hash_key),
+            "https://accounts.betterbase.dev",
+            "user-123",
+        );
 
         // HMAC-SHA256 output is 64 hex chars
         assert_eq!(key.len(), 64);
 
         // Deterministic
-        let key2 = rate_limit_key(Some(hash_key), "https://accounts.betterbase.dev", "user-123");
+        let key2 = rate_limit_key(
+            Some(hash_key),
+            "https://accounts.betterbase.dev",
+            "user-123",
+        );
         assert_eq!(key, key2);
     }
 

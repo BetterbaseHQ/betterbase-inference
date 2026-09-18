@@ -198,7 +198,11 @@ mod tests {
         )
         .await;
 
-        Validator::with_jwks(jwks, "betterbase-accounts".into(), vec!["betterbase-inference".into()])
+        Validator::with_jwks(
+            jwks,
+            "betterbase-accounts".into(),
+            vec!["betterbase-inference".into()],
+        )
     }
 
     fn build_token(encoding_key: &EncodingKey, kid: &str, claims: TestClaims) -> String {
