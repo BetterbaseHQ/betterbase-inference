@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code when working with the betterbase-inference codebase.
+Guidance for AI coding agents working with the betterbase-inference codebase.
 
 ## Overview
 
