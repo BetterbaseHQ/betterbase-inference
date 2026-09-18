@@ -17,11 +17,10 @@ tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # JWT
-jsonwebtoken = "9"
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto", "use_pem"] }
 
 # P-256 / ECDSA
-p256 = { version = "0.13", features = ["jwk", "pkcs8"] }
-elliptic-curve = { version = "0.13", features = ["jwk"] }
+p256 = { version = "0.14", features = ["pkcs8", "getrandom"] }
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
@@ -31,8 +30,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
 # HMAC for rate limit keys
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 
 # Errors
 thiserror = "2"
@@ -44,8 +43,6 @@ serde_json = "1"
 # Hex decode
 hex = "0.4"
 
-# Random - use rand_core 0.6 to match p256's re-export
-rand_core = { version = "0.6", features = ["getrandom"] }
 
 # URL building
 url = "2"
@@ -54,7 +51,7 @@ url = "2"
 futures-util = { version = "0.3", features = ["io"] }
 
 # Base64 for JWK coordinates
-base64 = "0.22"
+base64 = "0.23"
 
 # Byte streams
 bytes = "1"

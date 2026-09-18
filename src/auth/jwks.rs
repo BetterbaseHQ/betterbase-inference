@@ -205,14 +205,15 @@ fn validate_p256_point(x: &[u8], y: &[u8]) -> Option<()> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use p256::elliptic_curve::sec1::ToSec1Point;
+    use p256::elliptic_curve::Generate;
 
     #[test]
     fn test_parse_valid_jwk() {
         // Generate a real P-256 key and extract coordinates
-        let secret = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let secret = p256::SecretKey::generate();
         let public = secret.public_key();
-        let point = public.to_encoded_point(false);
+        let point = public.to_sec1_point(false);
 
         let x_b64 = URL_SAFE_NO_PAD.encode(point.x().unwrap());
         let y_b64 = URL_SAFE_NO_PAD.encode(point.y().unwrap());
@@ -272,9 +273,9 @@ pub(crate) mod tests {
         let client = JwksClient::new("http://unused".into(), Duration::from_secs(3600));
 
         // Manually populate cache
-        let secret = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let secret = p256::SecretKey::generate();
         let public = secret.public_key();
-        let point = public.to_encoded_point(false);
+        let point = public.to_sec1_point(false);
 
         let key_bytes = KeyBytes {
             x: point.x().unwrap().to_vec(),

@@ -5,7 +5,8 @@ use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
+use p256::elliptic_curve::Generate;
 use p256::pkcs8::EncodePrivateKey;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -33,9 +34,9 @@ struct DevClaims {
 impl DevMode {
     /// Create a new dev mode with an ephemeral P-256 key.
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let secret = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let secret = p256::SecretKey::generate();
         let public = secret.public_key();
-        let point = public.to_encoded_point(false);
+        let point = public.to_sec1_point(false);
 
         let der = secret.to_pkcs8_der()?;
         let encoding_key = EncodingKey::from_ec_der(der.as_bytes());

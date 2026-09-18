@@ -162,7 +162,8 @@ impl Validator {
 mod tests {
     use super::*;
     use jsonwebtoken::{encode, EncodingKey, Header};
-    use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use p256::elliptic_curve::sec1::ToSec1Point;
+    use p256::elliptic_curve::Generate;
     use p256::pkcs8::EncodePrivateKey;
     use serde::Serialize;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -180,7 +181,7 @@ mod tests {
     }
 
     fn make_test_key() -> (p256::SecretKey, EncodingKey) {
-        let secret = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let secret = p256::SecretKey::generate();
         let der = secret.to_pkcs8_der().unwrap();
         let encoding_key = EncodingKey::from_ec_der(der.as_bytes());
         (secret, encoding_key)
@@ -188,7 +189,7 @@ mod tests {
 
     async fn make_test_validator(secret: &p256::SecretKey, kid: &str) -> Validator {
         let public = secret.public_key();
-        let point = public.to_encoded_point(false);
+        let point = public.to_sec1_point(false);
 
         let jwks = JwksClient::new("http://unused".into(), Duration::from_secs(3600));
         jwks.insert_key(
