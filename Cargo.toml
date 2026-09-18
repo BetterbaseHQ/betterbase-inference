@@ -17,7 +17,7 @@ tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # JWT
-jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto", "use_pem"] }
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
 
 # P-256 / ECDSA
 p256 = { version = "0.14", features = ["pkcs8", "getrandom"] }
@@ -43,10 +43,8 @@ serde_json = "1"
 # Hex decode
 hex = "0.4"
 
-
 # URL building
 url = "2"
-
 
 futures-util = { version = "0.3", features = ["io"] }
 
