@@ -22,11 +22,19 @@ pub fn build_router(
     validator: Arc<Validator>,
     rate_limiter: Option<Arc<RateLimiter>>,
     http_client: reqwest::Client,
+    max_upstream_concurrency: u32,
+    max_request_body_bytes: usize,
+    require_ehbp: bool,
 ) -> Router {
     let state = Arc::new(AppState {
         backend: backend.clone(),
         http_client,
         rate_limiter,
+        upstream_permits: Arc::new(tokio::sync::Semaphore::new(
+            max_upstream_concurrency as usize,
+        )),
+        max_request_body_bytes,
+        require_ehbp,
     });
 
     let caps = backend.capabilities();
@@ -50,12 +58,16 @@ pub fn build_router(
             protected_routes.route("/v1/chat/completions", post(handlers::chat_completions));
     }
 
-    let protected_routes = protected_routes.layer(axum_middleware::from_fn_with_state(
-        validator.clone(),
-        |state: axum::extract::State<Arc<Validator>>,
-         req: axum::extract::Request,
-         next: axum_middleware::Next| { middleware::auth_middleware(state.0, req, next) },
-    ));
+    let protected_routes = protected_routes
+        .layer(axum::extract::DefaultBodyLimit::max(max_request_body_bytes))
+        .layer(axum_middleware::from_fn_with_state(
+            validator.clone(),
+            |state: axum::extract::State<Arc<Validator>>,
+             req: axum::extract::Request,
+             next: axum_middleware::Next| {
+                middleware::auth_middleware(state.0, req, next)
+            },
+        ));
 
     Router::new()
         .merge(public_routes)

@@ -12,6 +12,17 @@ use super::AuthError;
 /// Maximum allowed JWKS response size (1MB).
 const MAX_JWKS_SIZE: usize = 1 << 20;
 
+/// Minimum spacing between upstream JWKS fetches (AUD-043).
+///
+/// Cache misses — most commonly an unknown `kid` on an attacker-forged
+/// token, which reaches this path *before* authentication and therefore
+/// outside the per-user rate limiter — must not be able to drive an
+/// unbounded fetch loop against the JWKS origin. Any refresh attempt
+/// (success or failure) stamps `last_refresh_attempt`; further attempts
+/// inside this window are refused and answered from cache or as
+/// `KeyNotFound`.
+const REFRESH_FLOOR: Duration = Duration::from_secs(30);
+
 /// Raw JWK coordinate bytes for a P-256 key.
 /// We store raw bytes instead of `DecodingKey` because `DecodingKey` doesn't implement `Clone`.
 #[derive(Clone)]
@@ -32,6 +43,7 @@ pub struct JwksClient {
 struct KeyCache {
     keys: HashMap<String, KeyBytes>,
     last_fetch: Option<Instant>,
+    last_refresh_attempt: Option<Instant>,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +76,7 @@ impl JwksClient {
             cache: RwLock::new(KeyCache {
                 keys: HashMap::new(),
                 last_fetch: None,
+                last_refresh_attempt: None,
             }),
             refresh_mutex: Mutex::new(()),
             refresh_ttl,
@@ -92,6 +105,23 @@ impl JwksClient {
             if let Some(key) = cache.keys.get(kid) {
                 if !self.needs_refresh(&cache) {
                     return Ok((key.x.clone(), key.y.clone()));
+                }
+            }
+        }
+
+        // AUD-043: refresh attempts are floor-limited. Waiters that
+        // arrive while another attempt is inside the window are answered
+        // from cache (possibly stale) or as KeyNotFound — they never
+        // trigger their own fetch. This bounds unknown-kid traffic,
+        // which is unauthenticated, to one upstream fetch per window.
+        {
+            let cache = self.cache.read().await;
+            if let Some(last) = cache.last_refresh_attempt {
+                if last.elapsed() < REFRESH_FLOOR {
+                    if let Some(key) = cache.keys.get(kid) {
+                        return Ok((key.x.clone(), key.y.clone()));
+                    }
+                    return Err(AuthError::KeyNotFound(kid.to_string()));
                 }
             }
         }
@@ -132,15 +162,36 @@ impl JwksClient {
     }
 
     async fn refresh(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let resp = self.http_client.get(&self.url).send().await?;
+        // Stamp the attempt before fetching: concurrent waiters that
+        // acquire the mutex after us observe a fresh attempt inside the
+        // floor window and skip their own fetch — failed or hanging
+        // fetches count too.
+        {
+            let mut cache = self.cache.write().await;
+            cache.last_refresh_attempt = Some(Instant::now());
+        }
+
+        let mut resp = self.http_client.get(&self.url).send().await?;
 
         if !resp.status().is_success() {
             return Err(format!("JWKS endpoint returned status {}", resp.status()).into());
         }
 
-        let body = resp.bytes().await?;
-        if body.len() > MAX_JWKS_SIZE {
+        // Reject oversized bodies up front when the origin declares a
+        // length, and enforce the cap while streaming otherwise — never
+        // buffer an unbounded response before checking.
+        if resp
+            .content_length()
+            .is_some_and(|len| len as usize > MAX_JWKS_SIZE)
+        {
             return Err("JWKS response exceeds size limit".into());
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = resp.chunk().await? {
+            if body.len() + chunk.len() > MAX_JWKS_SIZE {
+                return Err("JWKS response exceeds size limit".into());
+            }
+            body.extend_from_slice(&chunk);
         }
 
         let jwks: JwksResponse = serde_json::from_slice(&body)?;
@@ -207,6 +258,8 @@ pub(crate) mod tests {
     use super::*;
     use p256::elliptic_curve::sec1::ToSec1Point;
     use p256::elliptic_curve::Generate;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_parse_valid_jwk() {
@@ -293,5 +346,94 @@ pub(crate) mod tests {
         let (x, y) = result.unwrap();
         assert_eq!(x, key_bytes.x);
         assert_eq!(y, key_bytes.y);
+    }
+
+    // AUD-043: unauthenticated unknown-kid lookups must not drive an
+    // unbounded upstream fetch loop.
+    #[tokio::test]
+    async fn test_unknown_kid_refresh_is_cooldown_limited() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "keys": []
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = JwksClient::new(format!("{}/jwks", server.uri()), Duration::from_secs(3600));
+
+        // Burst of unknown-kid lookups.
+        for _ in 0..5 {
+            let err = client.get_key_bytes("attacker-kid").await.unwrap_err();
+            assert!(matches!(err, AuthError::KeyNotFound(_)));
+        }
+
+        // Exactly one upstream fetch served the whole burst.
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_known_key_served_from_cache_during_cooldown() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "keys": []
+            })))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let client = JwksClient::new(format!("{}/jwks", server.uri()), Duration::from_secs(3600));
+
+        let secret = p256::SecretKey::generate();
+        let public = secret.public_key();
+        let point = public.to_sec1_point(false);
+        client
+            .insert_key(
+                "known-key".into(),
+                point.x().unwrap().to_vec(),
+                point.y().unwrap().to_vec(),
+            )
+            .await;
+        // Simulate a refresh attempt that just happened, with a stale
+        // cache so the fast path would otherwise trigger a fetch.
+        {
+            let mut cache = client.cache.write().await;
+            cache.last_fetch = Some(Instant::now() - Duration::from_secs(7200));
+            cache.last_refresh_attempt = Some(Instant::now());
+        }
+
+        let result = client.get_key_bytes("known-key").await;
+        assert!(
+            result.is_ok(),
+            "stale-but-known key must be served, not fetched"
+        );
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_oversized_jwks_rejected() {
+        let server = MockServer::start().await;
+        let oversized = "x".repeat(MAX_JWKS_SIZE + 1);
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(oversized))
+            .mount(&server)
+            .await;
+
+        let client = JwksClient::new(format!("{}/jwks", server.uri()), Duration::from_secs(3600));
+        let err = client.get_key_bytes("any-kid").await.unwrap_err();
+        match err {
+            AuthError::JwksFetchError(message) => {
+                assert!(
+                    message.contains("size limit"),
+                    "unexpected error: {message}"
+                );
+            }
+            other => panic!("expected JwksFetchError, got {other:?}"),
+        }
     }
 }

@@ -2,7 +2,9 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/BetterbaseHQ/betterbase-inference/blob/main/LICENSE)
 
-Private LLM inference for your authenticated users. Requests are encrypted end-to-end using a [Tinfoil](https://tinfoil.sh) Trusted Execution Environment (TEE) -- the proxy authenticates and rate-limits but never sees plaintext inference content.
+Authenticated proxy for private LLM inference via a [Tinfoil](https://tinfoil.sh) Trusted Execution Environment (TEE). The proxy authenticates and rate-limits requests and forwards them to the TEE backend.
+
+> **Read this before relying on confidentiality.** End-to-end encryption is *the client's job* in this architecture: a client that implements Tinfoil's client-side EHBP encryption encrypts prompts so only the TEE can decrypt them, and the proxy relays the ciphertext (`Ehbp-Encapsulated-Key` / `Ehbp-Response-Nonce` headers are passed through). **A client that does not — including the quick-start below — sends plaintext that this proxy can read.** No reference EHBP client is checked in yet (tracked as a v1.x work item); until one exists, treat the proxy as a trusted hop. Operators who must not accept plaintext can set `REQUIRE_EHBP=true`, which rejects any chat request lacking encryption material.
 
 > **Note:** This service runs standalone and is not part of the `docker-compose` stack. See the [betterbase-dev](https://github.com/BetterbaseHQ/betterbase-dev) repo for the full platform setup.
 
@@ -25,7 +27,7 @@ Tinfoil (enclave)
 Client receives streamed response
 ```
 
-The proxy adds Tinfoil's EHBP (Encrypted HTTP Bearer Protocol) headers for cryptographic attestation, proving the request was handled inside a genuine TEE. The client's data is encrypted end-to-end -- the proxy authenticates and rate-limits but never sees plaintext inference content.
+The proxy passes Tinfoil's EHBP (Encrypted HTTP Bearer Protocol) headers through, which lets an encrypting client receive responses only it can decrypt and verify attestation. Whether the request is actually encrypted is decided client-side; see the confidentiality note above.
 
 ## Prerequisites
 
@@ -46,6 +48,9 @@ TINFOIL_API_KEY=your-key just dev
 Once the server is running, copy the test JWT from the output and make a request:
 
 ```bash
+# NOTE: this sends a PLAINTEXT prompt — fine for dev mode, but it means
+# the proxy can read it. Real confidentiality requires a client that
+# implements Tinfoil's EHBP encryption (see the note at the top).
 curl http://localhost:5381/v1/chat/completions \
   -H "Authorization: Bearer <test-jwt-from-output>" \
   -H "Content-Type: application/json" \
@@ -54,8 +59,12 @@ curl http://localhost:5381/v1/chat/completions \
 
 ### Production
 
+`ISSUER` and `AUDIENCES` are **required** — the server refuses to start without them, because an unbound validator would accept inference-scoped tokens issued for any service.
+
 ```bash
 JWKS_URL=https://accounts.example.com/.well-known/jwks.json \
+ISSUER=https://accounts.example.com \
+AUDIENCES=betterbase-inference \
 TINFOIL_API_KEY=your-key \
 cargo run
 ```
@@ -97,11 +106,14 @@ All configuration via environment variables or CLI flags:
 |----------|----------|---------|-------------|
 | `TINFOIL_API_KEY` | Yes | -- | API key for Tinfoil backend |
 | `JWKS_URL` | Yes* | -- | JWKS endpoint for JWT validation (*not needed in `--dev-mode`) |
-| `ISSUER` | No | -- | Expected JWT issuer claim |
-| `AUDIENCES` | No | -- | Comma-separated valid JWT audiences |
+| `ISSUER` | **Yes** | -- | Expected JWT issuer claim (dev mode defaults it) |
+| `AUDIENCES` | **Yes** | -- | Comma-separated valid JWT audiences (dev mode defaults it) |
 | `TINFOIL_BASE_URL` | No | `https://inference.tinfoil.sh` | Tinfoil API base URL |
 | `RATE_LIMIT_RPM` | No | 60 | Requests per minute per user (0 to disable) |
 | `RATE_LIMIT_BURST` | No | 10 | Burst size for rate limiter |
+| `REQUIRE_EHBP` | No | `false` | Reject chat requests without client-side encryption (see confidentiality note) |
+| `MAX_UPSTREAM_CONCURRENCY` | No | 64 | Max in-flight proxied upstream requests (429 beyond) |
+| `MAX_REQUEST_BODY_BYTES` | No | 10485760 | Max proxied request body size (413 beyond) |
 | `IDENTITY_HASH_KEY` | No | -- | 32-byte hex key for privacy-preserving rate limit keys |
 | `LOG_FORMAT` | No | `text` | Log format: `text` or `json` |
 | `PORT` | No | 5381 | Listen port |

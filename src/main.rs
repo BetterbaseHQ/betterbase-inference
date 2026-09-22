@@ -108,8 +108,11 @@ async fn main() {
         parse_audience_list(&audiences_raw)
     };
 
-    if issuer.is_empty() && audiences.is_empty() {
-        warn!("ISSUER and AUDIENCES are both unconfigured — tokens from any issuer/audience will be accepted");
+    // AUD-042: fail closed — an unbound validator accepts tokens from any
+    // issuer/audience the JWKS authority signs for.
+    if let Err(message) = config::validate_auth_binding(config.dev_mode, &issuer, &audiences) {
+        error!("{message}");
+        std::process::exit(1);
     }
 
     // Configure Tinfoil backend
@@ -204,7 +207,15 @@ async fn main() {
         .build()
         .expect("failed to build HTTP client");
 
-    let app = server::build_router(backend, validator, rate_limiter, http_client);
+    let app = server::build_router(
+        backend,
+        validator,
+        rate_limiter,
+        http_client,
+        config.max_upstream_concurrency,
+        config.max_request_body_bytes,
+        config.require_ehbp,
+    );
 
     let addr = normalize_addr(&config.addr);
     let listener = TcpListener::bind(&addr).await.unwrap_or_else(|e| {
