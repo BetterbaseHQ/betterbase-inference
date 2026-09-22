@@ -112,8 +112,8 @@ All configuration via environment variables or CLI flags:
 | `RATE_LIMIT_RPM` | No | 60 | Requests per minute per user (0 to disable) |
 | `RATE_LIMIT_BURST` | No | 10 | Burst size for rate limiter |
 | `REQUIRE_EHBP` | No | `false` | Reject chat requests without client-side encryption (see confidentiality note) |
-| `MAX_UPSTREAM_CONCURRENCY` | No | 64 | Max in-flight proxied upstream requests (429 beyond) |
-| `MAX_REQUEST_BODY_BYTES` | No | 10485760 | Max proxied request body size (413 beyond) |
+| `MAX_UPSTREAM_CONCURRENCY` | No | 256 | Max concurrent upstream connections, permits held for the response-stream lifetime (429 beyond) |
+| `MAX_REQUEST_BODY_BYTES` | No | 10485760 | Max proxied request body size, enforced on the wire (413/teardown beyond) |
 | `IDENTITY_HASH_KEY` | No | -- | 32-byte hex key for privacy-preserving rate limit keys |
 | `LOG_FORMAT` | No | `text` | Log format: `text` or `json` |
 | `PORT` | No | 5381 | Listen port |

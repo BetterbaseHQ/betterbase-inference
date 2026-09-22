@@ -114,6 +114,13 @@ async fn main() {
         error!("{message}");
         std::process::exit(1);
     }
+    if let Err(message) = config::validate_resource_limits(
+        config.max_upstream_concurrency,
+        config.max_request_body_bytes,
+    ) {
+        error!("{message}");
+        std::process::exit(1);
+    }
 
     // Configure Tinfoil backend
     let api_key = match &config.tinfoil_api_key {

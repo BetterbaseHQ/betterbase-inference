@@ -58,16 +58,16 @@ pub fn build_router(
             protected_routes.route("/v1/chat/completions", post(handlers::chat_completions));
     }
 
-    let protected_routes = protected_routes
-        .layer(axum::extract::DefaultBodyLimit::max(max_request_body_bytes))
-        .layer(axum_middleware::from_fn_with_state(
-            validator.clone(),
-            |state: axum::extract::State<Arc<Validator>>,
-             req: axum::extract::Request,
-             next: axum_middleware::Next| {
-                middleware::auth_middleware(state.0, req, next)
-            },
-        ));
+    // AUD-044 note: the request-body cap is applied inside
+    // `proxy_to_backend` (`http_body_util::Limited`) — axum's
+    // `DefaultBodyLimit` is inert here because the proxy streams bodies
+    // through without a body-consuming extractor.
+    let protected_routes = protected_routes.layer(axum_middleware::from_fn_with_state(
+        validator.clone(),
+        |state: axum::extract::State<Arc<Validator>>,
+         req: axum::extract::Request,
+         next: axum_middleware::Next| { middleware::auth_middleware(state.0, req, next) },
+    ));
 
     Router::new()
         .merge(public_routes)

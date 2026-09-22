@@ -34,8 +34,9 @@ pub struct AppState {
     /// (AUD-044) — including the public hpke-keys proxy, which attaches
     /// the backend API key and would otherwise be unbounded.
     pub upstream_permits: Arc<tokio::sync::Semaphore>,
-    /// Declared request-body cap; enforced up front via Content-Length
-    /// and as a streaming backstop via `DefaultBodyLimit` (AUD-044).
+    /// Request-body cap (AUD-044): enforced up front via Content-Length
+    /// and on the wire via `http_body_util::Limited`, so chunked or
+    /// lying bodies are cut mid-stream too.
     pub max_request_body_bytes: usize,
     /// AUD-041: when set, chat requests must carry client-side
     /// encryption material (EHBP encapsulation) or be rejected.
@@ -140,8 +141,8 @@ fn require_inference_scope(auth: &AuthUser) -> Option<Response> {
 }
 
 /// Reject requests whose declared body exceeds the cap (AUD-044).
-/// Honest clients get a clean 413; the `DefaultBodyLimit` layer is the
-/// streaming backstop for lying or chunked bodies.
+/// Honest clients get a clean 413; `limited_request_body` enforces the
+/// cap on the wire for lying or chunked bodies.
 fn check_request_size(headers: &HeaderMap, max: usize) -> Option<Response> {
     let len = headers
         .get("content-length")?
@@ -172,9 +173,12 @@ async fn proxy_to_backend(state: &AppState, req: axum::extract::Request, path: &
         return resp;
     }
 
-    // AUD-044: bound aggregate upstream concurrency. `try_acquire` fails
-    // fast — an overloaded proxy answers 429 instead of queueing.
-    let _permit = match state.upstream_permits.try_acquire() {
+    // AUD-044: bound concurrent upstream *connections* — the permit is
+    // held for the response stream's whole lifetime (it moves into the
+    // stream and drops when the stream ends), so long-lived SSE
+    // responses count against the cap. `try_acquire` fails fast — an
+    // overloaded proxy answers 429 instead of queueing.
+    let permit = match state.upstream_permits.clone().try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => {
             return (
@@ -229,8 +233,10 @@ async fn proxy_to_backend(state: &AppState, req: axum::extract::Request, path: &
         }
     }
 
-    // Stream request body directly (no buffering)
-    let body_stream = body.into_data_stream();
+    // Stream request body without buffering, capped on the wire
+    // (AUD-044): exceeding the limit errors the stream, which tears
+    // down the upstream request.
+    let body_stream = limited_request_body(body, state.max_request_body_bytes).into_data_stream();
     let req_body = reqwest::Body::wrap_stream(body_stream);
     req_builder = req_builder.body(req_body);
 
@@ -279,11 +285,15 @@ async fn proxy_to_backend(state: &AppState, req: axum::extract::Request, path: &
         response_headers.insert(k.clone(), v.clone());
     }
 
-    // Stream response body with idle and total deadlines (AUD-044)
+    // Stream response body with idle and total deadlines (AUD-044).
+    // The permit moves into the stream: it is released exactly when the
+    // response finishes, keeping the semaphore a true bound on
+    // concurrent upstream connections.
     let stream = bounded_upstream_stream(
         resp.bytes_stream(),
         RESPONSE_IDLE_TIMEOUT,
         RESPONSE_TOTAL_TIMEOUT,
+        permit,
     );
 
     let body = Body::from_stream(stream);
@@ -308,6 +318,17 @@ fn write_error(status: StatusCode, message: &str) -> Response {
         .into_response()
 }
 
+/// Cap a request body on the wire (AUD-044).
+///
+/// `axum::extract::DefaultBodyLimit` is inert for this proxy — it only
+/// applies via body-consuming extractors, and the proxy streams bodies
+/// straight through — so the cap is applied directly with
+/// `http_body_util::Limited`: a body that exceeds `max` errors the
+/// stream instead of streaming indefinitely.
+fn limited_request_body(body: Body, max: usize) -> Body {
+    Body::new(http_body_util::Limited::new(body, max))
+}
+
 /// Wrap an upstream body stream with idle and total deadlines (AUD-044).
 ///
 /// Each chunk must arrive within `idle_timeout` of the previous one, and
@@ -318,49 +339,56 @@ fn bounded_upstream_stream<S>(
     stream: S,
     idle_timeout: Duration,
     total_timeout: Duration,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> impl Stream<Item = Result<axum::body::Bytes, std::io::Error>>
 where
     S: Stream<Item = Result<bytes::Bytes, reqwest::Error>>,
 {
     let stream = Box::pin(stream);
     let deadline = tokio::time::Instant::now() + total_timeout;
-    futures_util::stream::unfold((stream, deadline), move |(stream, deadline)| async move {
-        let mut stream = stream;
-        if tokio::time::Instant::now() >= deadline {
-            return None;
-        }
-        // The idle wait never outlives the total budget.
-        let remaining = deadline - tokio::time::Instant::now();
-        let wait = idle_timeout.min(remaining);
-        match tokio::time::timeout(wait, stream.next()).await {
-            Ok(Some(Ok(chunk))) => Some((
-                Ok(axum::body::Bytes::from(chunk.to_vec())),
-                (stream, deadline),
-            )),
-            Ok(Some(Err(e))) => {
-                warn!(error = %e, "error reading upstream response");
-                Some((Err(std::io::Error::other(e)), (stream, deadline)))
-            }
-            Ok(None) => None,
-            Err(_) => {
-                warn!("upstream response stream stalled (idle or total deadline)");
-                // Expire the deadline so the stream ends after this error.
-                Some((
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "upstream stream deadline exceeded",
+    futures_util::stream::unfold(
+        (stream, deadline, permit),
+        move |(stream, deadline, permit)| {
+            async move {
+                let mut stream = stream;
+                if tokio::time::Instant::now() >= deadline {
+                    return None;
+                }
+                // The idle wait never outlives the total budget.
+                let remaining = deadline - tokio::time::Instant::now();
+                let wait = idle_timeout.min(remaining);
+                match tokio::time::timeout(wait, stream.next()).await {
+                    Ok(Some(Ok(chunk))) => Some((
+                        Ok(axum::body::Bytes::from(chunk.to_vec())),
+                        (stream, deadline, permit),
                     )),
-                    (stream, tokio::time::Instant::now()),
-                ))
+                    Ok(Some(Err(e))) => {
+                        warn!(error = %e, "error reading upstream response");
+                        Some((Err(std::io::Error::other(e)), (stream, deadline, permit)))
+                    }
+                    // Stream complete — dropping `permit` here releases the
+                    // upstream-connection slot.
+                    Ok(None) => None,
+                    Err(_) => {
+                        warn!("upstream response stream stalled (idle or total deadline)");
+                        // Expire the deadline so the stream ends after this error.
+                        Some((
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "upstream stream deadline exceeded",
+                            )),
+                            (stream, tokio::time::Instant::now(), permit),
+                        ))
+                    }
+                }
             }
-        }
-    })
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::extract::DefaultBodyLimit;
     use axum::routing::get;
     use futures_util::StreamExt;
     use std::time::Instant;
@@ -490,8 +518,8 @@ mod tests {
         headers.insert("content-length", "512".parse().unwrap());
         assert!(check_request_size(&headers, 1024).is_none());
 
-        // Absent or malformed Content-Length is not rejected here — the
-        // DefaultBodyLimit layer bounds those while streaming.
+        // Absent or malformed Content-Length is not rejected here —
+        // `limited_request_body` caps those on the wire while streaming.
         let mut absent = HeaderMap::new();
         assert!(check_request_size(&absent, 1024).is_none());
         absent.insert("content-length", "not-a-number".parse().unwrap());
@@ -505,7 +533,10 @@ mod tests {
         let mut stream = std::pin::pin!(bounded_upstream_stream(
             stalled,
             Duration::from_millis(50),
-            Duration::from_secs(60)
+            Duration::from_secs(60),
+            std::sync::Arc::new(tokio::sync::Semaphore::new(1))
+                .try_acquire_owned()
+                .unwrap()
         ));
 
         let first = stream.next().await.unwrap();
@@ -530,7 +561,10 @@ mod tests {
         let mut bounded = std::pin::pin!(bounded_upstream_stream(
             stream,
             Duration::from_secs(60),
-            Duration::from_millis(100)
+            Duration::from_millis(100),
+            std::sync::Arc::new(tokio::sync::Semaphore::new(1))
+                .try_acquire_owned()
+                .unwrap()
         ));
 
         assert_eq!(
@@ -543,12 +577,46 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 
-    #[test]
-    fn test_default_body_limit_configured_on_protected_routes() {
-        // Compile-level documentation: the protected router layers
-        // DefaultBodyLimit with the configured cap (see build_router).
-        // Behavior is axum's; asserted here that our default is sane.
-        assert!(1024 < 10 * 1024 * 1024);
-        let _ = DefaultBodyLimit::max(10);
+    #[tokio::test]
+    async fn test_chunked_body_over_cap_errors_stream() {
+        // No Content-Length: three 10-byte chunks, cap 8 — the stream
+        // must error once the cap is exceeded, not deliver 30 bytes.
+        let chunks: Vec<Result<axum::body::Bytes, std::io::Error>> = (0..3)
+            .map(|_| Ok(axum::body::Bytes::from_static(b"0123456789")))
+            .collect();
+        let body = Body::from_stream(futures_util::stream::iter(chunks));
+
+        let mut stream = std::pin::pin!(limited_request_body(body, 8).into_data_stream());
+        let mut received: usize = 0;
+        let mut errored = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(bytes) => received += bytes.len(),
+                Err(_) => {
+                    errored = true;
+                    break;
+                }
+            }
+        }
+        assert!(errored, "over-cap chunked body must error the stream");
+        assert!(
+            received <= 10,
+            "stream must stop at the cap, got {received} bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_body_under_cap_streams_intact() {
+        let chunks: Vec<Result<axum::body::Bytes, std::io::Error>> = (0..3)
+            .map(|_| Ok(axum::body::Bytes::from_static(b"0123456789")))
+            .collect();
+        let body = Body::from_stream(futures_util::stream::iter(chunks));
+
+        let mut stream = std::pin::pin!(limited_request_body(body, 64).into_data_stream());
+        let mut received: usize = 0;
+        while let Some(item) = stream.next().await {
+            received += item.unwrap().len();
+        }
+        assert_eq!(received, 30, "under-cap body must stream in full");
     }
 }

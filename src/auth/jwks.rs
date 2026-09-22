@@ -38,6 +38,7 @@ pub struct JwksClient {
     cache: RwLock<KeyCache>,
     refresh_mutex: Mutex<()>,
     refresh_ttl: Duration,
+    refresh_floor: Duration,
 }
 
 struct KeyCache {
@@ -80,7 +81,16 @@ impl JwksClient {
             }),
             refresh_mutex: Mutex::new(()),
             refresh_ttl,
+            refresh_floor: REFRESH_FLOOR,
         }
+    }
+
+    /// Test hook: shrink the refresh floor so cooldown recovery is
+    /// observable without wall-clock waits.
+    #[cfg(test)]
+    pub(crate) fn with_refresh_floor(mut self, floor: Duration) -> Self {
+        self.refresh_floor = floor;
+        self
     }
 
     /// Get the decoding key bytes for the given key ID.
@@ -117,7 +127,7 @@ impl JwksClient {
         {
             let cache = self.cache.read().await;
             if let Some(last) = cache.last_refresh_attempt {
-                if last.elapsed() < REFRESH_FLOOR {
+                if last.elapsed() < self.refresh_floor {
                     if let Some(key) = cache.keys.get(kid) {
                         return Ok((key.x.clone(), key.y.clone()));
                     }
@@ -386,7 +396,10 @@ pub(crate) mod tests {
             .mount(&server)
             .await;
 
-        let client = JwksClient::new(format!("{}/jwks", server.uri()), Duration::from_secs(3600));
+        // A 1ms TTL makes the cached key stale without manipulating
+        // `last_fetch` by hand (monotonic-clock subtraction can panic
+        // on short-uptime hosts).
+        let client = JwksClient::new(format!("{}/jwks", server.uri()), Duration::from_millis(1));
 
         let secret = p256::SecretKey::generate();
         let public = secret.public_key();
@@ -398,19 +411,46 @@ pub(crate) mod tests {
                 point.y().unwrap().to_vec(),
             )
             .await;
-        // Simulate a refresh attempt that just happened, with a stale
-        // cache so the fast path would otherwise trigger a fetch.
+        // Simulate a refresh attempt that just happened.
         {
             let mut cache = client.cache.write().await;
-            cache.last_fetch = Some(Instant::now() - Duration::from_secs(7200));
             cache.last_refresh_attempt = Some(Instant::now());
         }
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         let result = client.get_key_bytes("known-key").await;
         assert!(
             result.is_ok(),
             "stale-but-known key must be served, not fetched"
         );
+        server.verify().await;
+    }
+
+    // The floor must delay refreshes, not block them forever — key
+    // rotation adoption depends on recovery.
+    #[tokio::test]
+    async fn test_refresh_resumes_after_cooldown_floor() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "keys": []
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let client = JwksClient::new(format!("{}/jwks", server.uri()), Duration::from_secs(3600))
+            .with_refresh_floor(Duration::from_millis(20));
+
+        // First miss fetches; second is inside the floor and must not.
+        assert!(client.get_key_bytes("kid").await.is_err());
+        assert!(client.get_key_bytes("kid").await.is_err());
+
+        // After the floor expires, a miss fetches again.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(client.get_key_bytes("kid").await.is_err());
+
         server.verify().await;
     }
 

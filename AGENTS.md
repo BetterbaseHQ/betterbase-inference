@@ -68,7 +68,7 @@ src/
 | `RATE_LIMIT_BURST` | No | Burst size (default: 10) |
 | `ISSUER` / `AUDIENCES` | **Yes** (non-dev) | Token binding; startup fails without them (AUD-042) |
 | `REQUIRE_EHBP` | No | Reject chat requests lacking EHBP encryption (AUD-041) |
-| `MAX_UPSTREAM_CONCURRENCY` | No | In-flight upstream proxy cap (default 64, AUD-044) |
+| `MAX_UPSTREAM_CONCURRENCY` | No | Concurrent upstream connection cap — permits held for the stream lifetime (default 256, AUD-044) |
 | `MAX_REQUEST_BODY_BYTES` | No | Proxied body size cap (default 10 MiB, AUD-044) |
 | `IDENTITY_HASH_KEY` | No | 32 bytes hex for privacy-preserving rate limit keys |
 | `LOG_FORMAT` | No | `text` (default) or `json` |

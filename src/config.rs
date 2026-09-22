@@ -48,9 +48,11 @@ pub struct Config {
     #[arg(long, default_value_t = 10, env = "RATE_LIMIT_BURST")]
     pub rate_limit_burst: u32,
 
-    /// Maximum in-flight proxied upstream requests (AUD-044). Further
-    /// requests fail with 429 until a slot frees.
-    #[arg(long, default_value_t = 64, env = "MAX_UPSTREAM_CONCURRENCY")]
+    /// Maximum concurrent upstream connections (AUD-044). Permits are
+    /// held for a response stream's whole lifetime, so long-lived SSE
+    /// responses count against the cap; further requests fail with 429
+    /// until a slot frees.
+    #[arg(long, default_value_t = 256, env = "MAX_UPSTREAM_CONCURRENCY")]
     pub max_upstream_concurrency: u32,
 
     /// Maximum proxied request body size in bytes (AUD-044). Oversized
@@ -58,13 +60,15 @@ pub struct Config {
     #[arg(long, default_value_t = 10 * 1024 * 1024, env = "MAX_REQUEST_BODY_BYTES")]
     pub max_request_body_bytes: usize,
 
-    /// AUD-041: reject chat requests that are not client-side encrypted.
-    /// When enabled, `/v1/chat/completions` requires the
-    /// `Ehbp-Encapsulated-Key` header (present only when the client
-    /// performed EHBP encapsulation), so no plaintext prompt can transit
-    /// the proxy. Requires clients to implement Tinfoil's client-side
-    /// encryption; the documented quick-start sends plaintext and will
-    /// be rejected with 400 while this is enabled.
+    /// AUD-041: reject chat requests lacking encryption material. When
+    /// enabled, `/v1/chat/completions` requires the
+    /// `Ehbp-Encapsulated-Key` header — present only when the client
+    /// performed EHBP encapsulation. This gates on the header's
+    /// presence, not cryptographic validity: a hostile client sending a
+    /// junk header endangers only its own prompt. Requires clients to
+    /// implement Tinfoil's client-side encryption; the documented
+    /// quick-start sends plaintext and will be rejected with 400 while
+    /// this is enabled.
     #[arg(long, default_value_t = false, env = "REQUIRE_EHBP")]
     pub require_ehbp: bool,
 }
@@ -98,6 +102,22 @@ pub fn validate_auth_binding(
             "AUDIENCES is required (comma-separated valid JWT audiences; dev mode defaults it)"
                 .into(),
         );
+    }
+    Ok(())
+}
+
+/// AUD-044: zero-valued resource knobs are silent kill switches
+/// (every proxied request 429'd / every body 413'd) — reject them at
+/// startup instead.
+pub fn validate_resource_limits(
+    max_upstream_concurrency: u32,
+    max_request_body_bytes: usize,
+) -> Result<(), String> {
+    if max_upstream_concurrency == 0 {
+        return Err("MAX_UPSTREAM_CONCURRENCY must be at least 1".into());
+    }
+    if max_request_body_bytes == 0 {
+        return Err("MAX_REQUEST_BODY_BYTES must be at least 1".into());
     }
     Ok(())
 }
@@ -156,5 +176,20 @@ mod tests {
     #[test]
     fn test_auth_binding_dev_mode_exempt() {
         assert!(validate_auth_binding(true, "", &[]).is_ok());
+    }
+
+    #[test]
+    fn test_resource_limits_reject_zero() {
+        assert!(validate_resource_limits(0, 1024)
+            .unwrap_err()
+            .contains("CONCURRENCY"));
+        assert!(validate_resource_limits(64, 0)
+            .unwrap_err()
+            .contains("BODY_BYTES"));
+    }
+
+    #[test]
+    fn test_resource_limits_accept_positive() {
+        assert!(validate_resource_limits(1, 1).is_ok());
     }
 }
